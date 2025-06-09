@@ -78,3 +78,16 @@ yarn.lock
 .env.development.local
 .env.test.local
 .env.production.local
+
+# Testing artifacts
+.coverage
+.coverage.*
+__pycache__/
+*.pyc
+.pytest_cache/
+htmlcov/
+
+# Temporary test files
+character_configs/test_character.*
+character_configs/new_character.*
+personas/new_character.txt
