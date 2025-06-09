@@ -1,0 +1,12 @@
+description: 'wizard boy '
+name: harry potter
+persona_file: harry potter.txt
+style:
+- fantasy
+- magic
+traits:
+- brave
+- innocent
+- humane
+- talented
+- revenge

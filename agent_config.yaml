@@ -1,0 +1,156 @@
+ai_settings:
+  image_generation:
+    enhance_prompt: true
+    fallback_services: []
+    pollinations_flux:
+      cfg_scale: 7.5
+      enhance: true
+      height: 1024
+      model: flux
+      quality_presets:
+        high:
+          cfg: 7.0
+          steps: 30
+        standard:
+          cfg: 6.5
+          steps: 20
+        ultra:
+          cfg: 7.5
+          steps: 50
+      steps: 50
+      width: 1024
+    primary_service: pollinations-flux-1-dev
+    quality: ultra
+    safety_filter: true
+    size: 1024x1024
+    style: realistic
+    timeout: 60
+  text_generation:
+    max_tokens: 4096
+    model: gemini-1.5-flash
+    safety_settings:
+      dangerous_content: BLOCK_MEDIUM_AND_ABOVE
+      harassment: BLOCK_MEDIUM_AND_ABOVE
+      hate_speech: BLOCK_MEDIUM_AND_ABOVE
+      sexually_explicit: BLOCK_MEDIUM_AND_ABOVE
+    temperature: 0.7
+    top_k: 40
+    top_p: 0.9
+analytics:
+  enabled: true
+  export_format: json
+  track_generations: true
+  track_user_interactions: true
+developer:
+  api:
+    cors_origins:
+    - http://localhost:3000
+    detailed_responses: false
+    extended_timeouts: false
+    rate_limit_bypass: false
+  debug:
+    debug_mode: false
+    profile_performance: false
+    trace_execution: false
+    verbose_logging: false
+  experimental:
+    advanced_caching: false
+    beta_features: false
+    custom_plugins: false
+    experimental_models: false
+  testing:
+    load_testing: false
+    mock_responses: false
+    simulation_mode: false
+    test_mode: false
+frequency_penalty: 1.2
+image_generation: null
+llm:
+  frequency_penalty: 1.2
+  max_output_tokens: 2500
+  model_name: gemini-1.5-flash-latest
+  presence_penalty: 1.2
+  temperature: 0.3
+  top_p: 0.3
+max_output_tokens: 2500
+max_tokens: 3000
+model_name: gemini-1.5-flash-latest
+performance:
+  cache_enabled: true
+  cache_ttl: 3600
+  max_concurrent_requests: 5
+  request_timeout: 30
+presence_penalty: 1.2
+retrieval:
+  embedding_model: sentence-transformers/paraphrase-multilingual-mpnet-base-v2
+  max_retrieve_docs: 10
+  reranker_model: cross-encoder/ms-marco-MiniLM-L-6-v2
+  similarity_threshold: 0.7
+safety:
+  compliance:
+    anonymize_data: false
+    data_retention_days: 30
+    gdpr_mode: false
+    user_consent_required: true
+  content_filtering:
+    allowed_categories:
+    - fiction
+    - adventure
+    - romance
+    - mystery
+    - fantasy
+    - sci-fi
+    blocked_categories:
+    - violence
+    - adult_content
+    - hate_speech
+    custom_filters: []
+    enabled: true
+    strict_mode: false
+  moderation:
+    auto_review: true
+    flagging_threshold: 0.8
+    human_review_required: false
+    toxicity_detection: true
+story_generation:
+  auto_save: true
+  creativity.character_development: true
+  creativity.plot_complexity: complex
+  creativity.prompt_expansion: true
+  creativity.randomness_level: 1
+  default_persona: neutral_storyteller
+  enable_content_moderation: true
+  enable_profanity_filter: true
+  max_story_length: 1000
+  structure.scene_transitions: smooth
+  style.default_genre: sci-fi
+  style.default_length: long
+  style.dialogue_style: casual
+  style.narrative_style: third_person
+system:
+  backup:
+    auto_backup: true
+    backup_interval_hours: 24
+    cloud_backup: false
+    retain_backups: 7
+  logging:
+    level: INFO
+    log_rotation: daily
+    log_to_file: true
+    max_log_size_mb: 100
+    retain_logs_days: 30
+  monitoring:
+    error_tracking: true
+    performance_tracking: true
+    real_time_monitoring: false
+    usage_analytics: true
+  notifications:
+    alert_thresholds:
+      error_rate: 0.05
+      memory_usage_percent: 85
+      response_time_ms: 5000
+    discord_webhook: ''
+    email_alerts: false
+    slack_webhook: ''
+temperature: 0.3
+top_p: 0.3

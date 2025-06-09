@@ -1,0 +1,7 @@
+description: sad
+name: test1
+persona_file: test.txt
+style:
+- sad
+traits:
+- sad

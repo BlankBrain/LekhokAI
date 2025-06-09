@@ -1,0 +1,15 @@
+torch>=2.0.0
+transformers>=4.30.0
+sentence-transformers>=2.2.2
+google-generativeai>=0.3.0
+pyyaml>=6.0
+numpy>=1.24.0
+scikit-learn>=1.0.0
+tqdm>=4.65.0
+fastapi
+uvicorn
+python-dotenv
+python-multipart
+psutil
+requests>=2.31.0
+Pillow>=10.0.0 

@@ -1,0 +1,7 @@
+description: happy
+name: manha
+persona_file: manha.txt
+style:
+- happy
+traits:
+- happy
