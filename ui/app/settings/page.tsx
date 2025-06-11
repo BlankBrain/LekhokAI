@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
+import { ProtectedRoute } from '../../components/ProtectedRoute';
+import { useAuth } from '@/lib/auth';
 import { 
   Shield, 
   Zap, 
@@ -134,7 +136,7 @@ const Toast: React.FC<ToastProps> = ({ message, type, visible, onClose }) => {
   );
 };
 
-export default function SettingsPage() {
+function SettingsPageContent() {
   const [sections, setSections] = useState<SettingsSection[]>([
     {
       id: 'safety',
@@ -986,4 +988,12 @@ function renderSectionContent(sectionId: string, data: any, updateData: (data: a
         </div>
       );
   }
+}
+
+export default function SettingsPage() {
+  return (
+    <ProtectedRoute>
+      <SettingsPageContent />
+    </ProtectedRoute>
+  );
 } 

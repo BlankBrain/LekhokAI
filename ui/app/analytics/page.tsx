@@ -29,6 +29,8 @@ import {
   Eye,
   AlertCircle
 } from 'lucide-react';
+import { ProtectedRoute } from '../../components/ProtectedRoute';
+import { useAuth } from '@/lib/auth';
 
 interface DashboardData {
   system_status: {
@@ -168,175 +170,177 @@ export default function AnalyticsPage() {
   }
 
   return (
-    <main className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50/30 to-gold/5">
-      <div className="container mx-auto px-4 py-6">
-        {/* Compact Header */}
-        <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center mb-6 gap-4">
-          <div>
-            <h1 className="text-3xl font-black text-techno mb-1">Analytics Dashboard</h1>
-            <p className="text-sm text-techno/60">System performance and usage statistics</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-1.5 text-xs text-gray-500 glass px-2 py-1.5 rounded-lg border border-white/30">
-              <Clock className="w-3 h-3" />
-              <span className="hidden sm:inline">Last updated:</span>
-              <span>{lastUpdated?.toLocaleTimeString()}</span>
+    <ProtectedRoute>
+      <main className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50/30 to-gold/5">
+        <div className="container mx-auto px-4 py-6">
+          {/* Compact Header */}
+          <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center mb-6 gap-4">
+            <div>
+              <h1 className="text-3xl font-black text-techno mb-1">Analytics Dashboard</h1>
+              <p className="text-sm text-techno/60">System performance and usage statistics</p>
             </div>
-            <button
-              onClick={() => setAutoRefresh(!autoRefresh)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                autoRefresh 
-                  ? 'bg-green-100 text-green-700 hover:bg-green-200 border border-green-200' 
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200 border border-gray-200'
-              }`}
-            >
-              <Eye className="w-3 h-3 inline mr-1" />
-              Auto-refresh {autoRefresh ? 'ON' : 'OFF'}
-            </button>
-            <button
-              onClick={loadDashboardData}
-              disabled={loading}
-              className="px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1 text-xs"
-            >
-              <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
-              Refresh
-            </button>
-            <button
-              onClick={exportData}
-              className="px-3 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center gap-1 text-xs"
-            >
-              <Download className="w-3 h-3" />
-              Export
-            </button>
-          </div>
-        </div>
-
-        {/* System Status Overview */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-          <StatusCard
-            title="CPU Usage"
-            value={`${dashboardData.system_status.system.cpu_percent.toFixed(1)}%`}
-            icon={<Cpu className="w-4 h-4" />}
-            color={dashboardData.system_status.system.cpu_percent > 80 ? "text-red-500" : 
-                   dashboardData.system_status.system.cpu_percent > 60 ? "text-yellow-500" : "text-blue-500"}
-            description="System processor utilization - monitors overall CPU load and performance"
-            chartData={dashboardData.system_metrics_history}
-            chartKey="cpu_percent"
-          />
-          <StatusCard
-            title="Memory Usage"
-            value={`${dashboardData.system_status.system.memory_percent.toFixed(1)}%`}
-            icon={<MemoryStick className="w-4 h-4" />}
-            color={dashboardData.system_status.system.memory_percent > 80 ? "text-red-500" : 
-                   dashboardData.system_status.system.memory_percent > 60 ? "text-yellow-500" : "text-green-500"}
-            description={`${formatBytes(dashboardData.system_status.system.memory_available_gb)} available - tracks RAM usage and available memory`}
-            chartData={dashboardData.system_metrics_history}
-            chartKey="memory_percent"
-          />
-          <StatusCard
-            title="Total Requests"
-            value={dashboardData.system_status.application.total_requests.toString()}
-            icon={<Globe className="w-4 h-4" />}
-            color="text-purple-500"
-            description="All API requests served - includes successful and failed requests to all endpoints"
-          />
-          <StatusCard
-            title="Stories Generated"
-            value={dashboardData.system_status.application.total_generations.toString()}
-            icon={<FileText className="w-4 h-4" />}
-            color="text-orange-500"
-            description="Total content created - counts all successful story generations across all characters"
-          />
-        </div>
-
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-          <StatusCard
-            title="System Uptime"
-            value={formatUptime(dashboardData.system_status.system.uptime_seconds)}
-            icon={<Activity className="w-4 h-4" />}
-            color="text-blue-500"
-            description="System running time - how long the server has been active without restart"
-          />
-          <StatusCard
-            title="Error Rate"
-            value={`${(dashboardData.system_status.application.error_rate * 100).toFixed(2)}%`}
-            icon={<AlertCircle className="w-4 h-4" />}
-            color={dashboardData.system_status.application.error_rate > 0.05 ? "text-red-500" : "text-green-500"}
-            description={`${dashboardData.system_status.application.total_errors} total errors - percentage of failed requests vs successful ones`}
-          />
-          <StatusCard
-            title="Recent Activity"
-            value={dashboardData.recent_activity.generations_24h.toString()}
-            icon={<Zap className="w-4 h-4" />}
-            color="text-green-500"
-            description="Stories in last 24h - recent content generation activity and user engagement"
-          />
-          <StatusCard
-            title="Disk Usage"
-            value={`${dashboardData.system_status.system.disk_percent.toFixed(1)}%`}
-            icon={<HardDrive className="w-4 h-4" />}
-            color={dashboardData.system_status.system.disk_percent > 80 ? "text-red-500" : 
-                   dashboardData.system_status.system.disk_percent > 60 ? "text-yellow-500" : "text-yellow-500"}
-            description="Storage utilization - monitors disk space usage for logs, cache, and application data"
-          />
-        </div>
-
-        {/* Usage Statistics */}
-        <div className="grid lg:grid-cols-2 gap-6">
-          {/* Character Usage */}
-          <div className="glass border border-white/30 rounded-lg p-4">
-            <div className="flex items-center gap-2 mb-4">
-              <Users className="w-4 h-4 text-purple-500" />
-              <h3 className="text-lg font-semibold text-techno">Character Usage</h3>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-1.5 text-xs text-gray-500 glass px-2 py-1.5 rounded-lg border border-white/30">
+                <Clock className="w-3 h-3" />
+                <span className="hidden sm:inline">Last updated:</span>
+                <span>{lastUpdated?.toLocaleTimeString()}</span>
+              </div>
+              <button
+                onClick={() => setAutoRefresh(!autoRefresh)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                  autoRefresh 
+                    ? 'bg-green-100 text-green-700 hover:bg-green-200 border border-green-200' 
+                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200 border border-gray-200'
+                }`}
+              >
+                <Eye className="w-3 h-3 inline mr-1" />
+                Auto-refresh {autoRefresh ? 'ON' : 'OFF'}
+              </button>
+              <button
+                onClick={loadDashboardData}
+                disabled={loading}
+                className="px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1 text-xs"
+              >
+                <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
+                Refresh
+              </button>
+              <button
+                onClick={exportData}
+                className="px-3 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center gap-1 text-xs"
+              >
+                <Download className="w-3 h-3" />
+                Export
+              </button>
             </div>
-            <p className="text-xs text-techno/60 mb-4">Most used characters - shows which storytelling personas are most popular with users and their total token consumption</p>
-            <div className="space-y-3">
-              {dashboardData.usage_statistics.character_usage.slice(0, 5).map((character, index) => (
-                <CharacterUsageItem key={character.character} character={character} rank={index + 1} />
-              ))}
-            </div>
-            {dashboardData.usage_statistics.character_usage.length === 0 && (
-              <p className="text-sm text-gray-500 text-center py-4">No character usage data available</p>
-            )}
           </div>
 
-          {/* Model Usage */}
-          <div className="glass border border-white/30 rounded-lg p-4">
-            <div className="flex items-center gap-2 mb-4">
-              <Brain className="w-4 h-4 text-blue-500" />
-              <h3 className="text-lg font-semibold text-techno">Model Usage</h3>
-            </div>
-            <p className="text-xs text-techno/60 mb-4">AI model statistics - tracks token usage and performance across different language models</p>
-            <div className="space-y-3">
-              {dashboardData.usage_statistics.model_usage.map((model) => (
-                <ModelUsageItem key={model.model} model={model} />
-              ))}
-            </div>
-            {dashboardData.usage_statistics.model_usage.length === 0 && (
-              <p className="text-sm text-gray-500 text-center py-4">No model usage data available</p>
-            )}
+          {/* System Status Overview */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+            <StatusCard
+              title="CPU Usage"
+              value={`${dashboardData.system_status.system.cpu_percent.toFixed(1)}%`}
+              icon={<Cpu className="w-4 h-4" />}
+              color={dashboardData.system_status.system.cpu_percent > 80 ? "text-red-500" : 
+                     dashboardData.system_status.system.cpu_percent > 60 ? "text-yellow-500" : "text-blue-500"}
+              description="System processor utilization - monitors overall CPU load and performance"
+              chartData={dashboardData.system_metrics_history}
+              chartKey="cpu_percent"
+            />
+            <StatusCard
+              title="Memory Usage"
+              value={`${dashboardData.system_status.system.memory_percent.toFixed(1)}%`}
+              icon={<MemoryStick className="w-4 h-4" />}
+              color={dashboardData.system_status.system.memory_percent > 80 ? "text-red-500" : 
+                     dashboardData.system_status.system.memory_percent > 60 ? "text-yellow-500" : "text-green-500"}
+              description={`${formatBytes(dashboardData.system_status.system.memory_available_gb)} available - tracks RAM usage and available memory`}
+              chartData={dashboardData.system_metrics_history}
+              chartKey="memory_percent"
+            />
+            <StatusCard
+              title="Total Requests"
+              value={dashboardData.system_status.application.total_requests.toString()}
+              icon={<Globe className="w-4 h-4" />}
+              color="text-purple-500"
+              description="All API requests served - includes successful and failed requests to all endpoints"
+            />
+            <StatusCard
+              title="Stories Generated"
+              value={dashboardData.system_status.application.total_generations.toString()}
+              icon={<FileText className="w-4 h-4" />}
+              color="text-orange-500"
+              description="Total content created - counts all successful story generations across all characters"
+            />
           </div>
-        </div>
 
-        {/* Performance Metrics */}
-        {dashboardData.performance_metrics.length > 0 && (
-          <div className="mt-6">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+            <StatusCard
+              title="System Uptime"
+              value={formatUptime(dashboardData.system_status.system.uptime_seconds)}
+              icon={<Activity className="w-4 h-4" />}
+              color="text-blue-500"
+              description="System running time - how long the server has been active without restart"
+            />
+            <StatusCard
+              title="Error Rate"
+              value={`${(dashboardData.system_status.application.error_rate * 100).toFixed(2)}%`}
+              icon={<AlertCircle className="w-4 h-4" />}
+              color={dashboardData.system_status.application.error_rate > 0.05 ? "text-red-500" : "text-green-500"}
+              description={`${dashboardData.system_status.application.total_errors} total errors - percentage of failed requests vs successful ones`}
+            />
+            <StatusCard
+              title="Recent Activity"
+              value={dashboardData.recent_activity.generations_24h.toString()}
+              icon={<Zap className="w-4 h-4" />}
+              color="text-green-500"
+              description="Stories in last 24h - recent content generation activity and user engagement"
+            />
+            <StatusCard
+              title="Disk Usage"
+              value={`${dashboardData.system_status.system.disk_percent.toFixed(1)}%`}
+              icon={<HardDrive className="w-4 h-4" />}
+              color={dashboardData.system_status.system.disk_percent > 80 ? "text-red-500" : 
+                     dashboardData.system_status.system.disk_percent > 60 ? "text-yellow-500" : "text-yellow-500"}
+              description="Storage utilization - monitors disk space usage for logs, cache, and application data"
+            />
+          </div>
+
+          {/* Usage Statistics */}
+          <div className="grid lg:grid-cols-2 gap-6">
+            {/* Character Usage */}
             <div className="glass border border-white/30 rounded-lg p-4">
               <div className="flex items-center gap-2 mb-4">
-                <Monitor className="w-4 h-4 text-green-500" />
-                <h3 className="text-lg font-semibold text-techno">Recent Performance</h3>
+                <Users className="w-4 h-4 text-purple-500" />
+                <h3 className="text-lg font-semibold text-techno">Character Usage</h3>
               </div>
-              <p className="text-xs text-techno/60 mb-4">API endpoint performance - response times and success rates for monitoring system health</p>
-              <div className="space-y-2 max-h-64 overflow-y-auto">
-                {dashboardData.performance_metrics.slice(0, 10).map((metric, index) => (
-                  <PerformanceMetricItem key={index} metric={metric} />
+              <p className="text-xs text-techno/60 mb-4">Most used characters - shows which storytelling personas are most popular with users and their total token consumption</p>
+              <div className="space-y-3">
+                {dashboardData.usage_statistics.character_usage.slice(0, 5).map((character, index) => (
+                  <CharacterUsageItem key={character.character} character={character} rank={index + 1} />
                 ))}
               </div>
+              {dashboardData.usage_statistics.character_usage.length === 0 && (
+                <p className="text-sm text-gray-500 text-center py-4">No character usage data available</p>
+              )}
+            </div>
+
+            {/* Model Usage */}
+            <div className="glass border border-white/30 rounded-lg p-4">
+              <div className="flex items-center gap-2 mb-4">
+                <Brain className="w-4 h-4 text-blue-500" />
+                <h3 className="text-lg font-semibold text-techno">Model Usage</h3>
+              </div>
+              <p className="text-xs text-techno/60 mb-4">AI model statistics - tracks token usage and performance across different language models</p>
+              <div className="space-y-3">
+                {dashboardData.usage_statistics.model_usage.map((model) => (
+                  <ModelUsageItem key={model.model} model={model} />
+                ))}
+              </div>
+              {dashboardData.usage_statistics.model_usage.length === 0 && (
+                <p className="text-sm text-gray-500 text-center py-4">No model usage data available</p>
+              )}
             </div>
           </div>
-        )}
-      </div>
-    </main>
+
+          {/* Performance Metrics */}
+          {dashboardData.performance_metrics.length > 0 && (
+            <div className="mt-6">
+              <div className="glass border border-white/30 rounded-lg p-4">
+                <div className="flex items-center gap-2 mb-4">
+                  <Monitor className="w-4 h-4 text-green-500" />
+                  <h3 className="text-lg font-semibold text-techno">Recent Performance</h3>
+                </div>
+                <p className="text-xs text-techno/60 mb-4">API endpoint performance - response times and success rates for monitoring system health</p>
+                <div className="space-y-2 max-h-64 overflow-y-auto">
+                  {dashboardData.performance_metrics.slice(0, 10).map((metric, index) => (
+                    <PerformanceMetricItem key={index} metric={metric} />
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </main>
+    </ProtectedRoute>
   );
 }
 

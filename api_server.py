@@ -17,18 +17,38 @@ import threading
 import signal
 import atexit
 import multiprocessing
+from fastapi import Depends
+
+# Import authentication components
+from auth_models import init_auth_db
+from auth_middleware import AuthMiddleware, get_current_user, require_auth, require_permission
+from auth_routes import auth_router
 
 # Configure multiprocessing to avoid memory leaks
 multiprocessing.set_start_method('spawn', force=True)
 
-app = FastAPI()
+# Initialize authentication database
+init_auth_db()
+
+app = FastAPI(
+    title="KarigorAI API",
+    description="Enhanced KarigorAI with role-based authentication system",
+    version="2.0.0"
+)
+
+# Add authentication middleware
+app.add_middleware(AuthMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["http://localhost:3000", "http://localhost:3001", "http://localhost:3002"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include authentication routes
+app.include_router(auth_router)
 
 agent = CharacterBasedAgent()
 
@@ -256,7 +276,9 @@ if __name__ == "__main__":
     print("Migration complete.")
 
 @app.get("/characters")
-def get_characters():
+@require_permission("character_view")
+def get_characters(current_user: Dict[str, Any] = Depends(get_current_user)):
+    """Get list of available characters (requires character view permission)"""
     char_names = agent.list_available_characters()
     characters = []
     for name in char_names:
@@ -269,14 +291,18 @@ def get_characters():
     return {"characters": characters}
 
 @app.post("/load_character")
-async def load_character(request: Request):
+@require_permission("character_view")
+async def load_character(request: Request, current_user: Dict[str, Any] = Depends(get_current_user)):
+    """Load a character (requires character view permission)"""
     data = await request.json()
     character = data.get("character")
     success = agent.load_character(character)
     return {"success": success}
 
 @app.post("/generate")
-async def generate(request: Request):
+@require_permission("story_generate")
+async def generate(request: Request, current_user: Dict[str, Any] = Depends(get_current_user)):
+    """Generate a story (requires story generation permission)"""
     start_time = time.time()
     try:
         data = await request.json()
@@ -293,12 +319,20 @@ async def generate(request: Request):
             meta["last_used"] = datetime.datetime.utcnow().isoformat()
             save_character_metadata(character, meta)
             
-        # --- Log to history with enhanced tracking ---
+        # --- Log to history with enhanced tracking including user ---
         conn = sqlite3.connect(HISTORY_DB)
         c = conn.cursor()
+        
+        # Add user_id column if it doesn't exist
+        c.execute("PRAGMA table_info(history)")
+        columns = [row[1] for row in c.fetchall()]
+        if 'user_id' not in columns:
+            c.execute("ALTER TABLE history ADD COLUMN user_id INTEGER")
+            conn.commit()
+        
         c.execute(
-            "INSERT INTO history (timestamp, story_prompt, character, story, image_prompt, model_name, input_tokens, output_tokens) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (datetime.datetime.utcnow().isoformat(), story_prompt, character, story, image_prompt, model_name, input_tokens, output_tokens)
+            "INSERT INTO history (timestamp, story_prompt, character, story, image_prompt, model_name, input_tokens, output_tokens, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (datetime.datetime.utcnow().isoformat(), story_prompt, character, story, image_prompt, model_name, input_tokens, output_tokens, current_user['id'] if current_user else None)
         )
         conn.commit()
         conn.close()
@@ -315,15 +349,31 @@ async def generate(request: Request):
         raise e
 
 @app.get("/history")
-def get_history(sort: str = 'desc'):
+@require_permission("story_view_own")
+def get_history(sort: str = 'desc', current_user: Dict[str, Any] = Depends(get_current_user)):
+    """Get user's story history (requires view own stories permission)"""
     conn = sqlite3.connect(HISTORY_DB)
     c = conn.cursor()
+    
+    # Add user_id column if it doesn't exist
+    c.execute("PRAGMA table_info(history)")
+    columns = [row[1] for row in c.fetchall()]
+    if 'user_id' not in columns:
+        c.execute("ALTER TABLE history ADD COLUMN user_id INTEGER")
+        conn.commit()
+    
     order_by = "timestamp DESC"
     if sort == 'asc':
         order_by = "timestamp ASC"
     elif sort == 'model':
         order_by = "character ASC, timestamp DESC"
-    c.execute(f"SELECT id, timestamp, story_prompt, character, story, image_prompt, favourite, model_name, input_tokens, output_tokens FROM history ORDER BY {order_by}")
+    
+    # Filter by user if not super admin
+    if current_user and current_user['role'] != 'super_admin':
+        c.execute(f"SELECT id, timestamp, story_prompt, character, story, image_prompt, favourite, model_name, input_tokens, output_tokens FROM history WHERE user_id = ? OR user_id IS NULL ORDER BY {order_by}", (current_user['id'],))
+    else:
+        c.execute(f"SELECT id, timestamp, story_prompt, character, story, image_prompt, favourite, model_name, input_tokens, output_tokens FROM history ORDER BY {order_by}")
+    
     rows = c.fetchall()
     conn.close()
     history = [
@@ -344,14 +394,29 @@ def get_history(sort: str = 'desc'):
     return {"history": history}
 
 @app.post("/history/{history_id}/favourite")
-def toggle_favourite(history_id: int):
+@require_permission("story_edit_own")
+def toggle_favourite(history_id: int, current_user: Dict[str, Any] = Depends(get_current_user)):
+    """Toggle favourite status of a story (requires edit own stories permission)"""
     conn = sqlite3.connect(HISTORY_DB)
     c = conn.cursor()
-    c.execute("SELECT favourite FROM history WHERE id = ?", (history_id,))
-    row = c.fetchone()
-    if not row:
-        conn.close()
-        raise HTTPException(status_code=404, detail="History record not found")
+    
+    # Check ownership or admin privileges
+    if current_user['role'] != 'super_admin':
+        c.execute("SELECT favourite, user_id FROM history WHERE id = ?", (history_id,))
+        row = c.fetchone()
+        if not row:
+            conn.close()
+            raise HTTPException(status_code=404, detail="History record not found")
+        if row[1] != current_user['id'] and row[1] is not None:
+            conn.close()
+            raise HTTPException(status_code=403, detail="Access denied")
+    else:
+        c.execute("SELECT favourite FROM history WHERE id = ?", (history_id,))
+        row = c.fetchone()
+        if not row:
+            conn.close()
+            raise HTTPException(status_code=404, detail="History record not found")
+    
     new_fav = 0 if row[0] else 1
     c.execute("UPDATE history SET favourite = ? WHERE id = ?", (new_fav, history_id))
     conn.commit()
@@ -359,10 +424,18 @@ def toggle_favourite(history_id: int):
     return {"success": True, "favourite": bool(new_fav)}
 
 @app.get("/favourites")
-def get_favourites():
+@require_permission("story_view_own")
+def get_favourites(current_user: Dict[str, Any] = Depends(get_current_user)):
+    """Get user's favourite stories (requires view own stories permission)"""
     conn = sqlite3.connect(HISTORY_DB)
     c = conn.cursor()
-    c.execute("SELECT id, timestamp, story_prompt, character, story, image_prompt, favourite, model_name, input_tokens, output_tokens FROM history WHERE favourite = 1 ORDER BY timestamp DESC")
+    
+    # Filter by user if not super admin
+    if current_user['role'] != 'super_admin':
+        c.execute("SELECT id, timestamp, story_prompt, character, story, image_prompt, favourite, model_name, input_tokens, output_tokens FROM history WHERE favourite = 1 AND (user_id = ? OR user_id IS NULL) ORDER BY timestamp DESC", (current_user['id'],))
+    else:
+        c.execute("SELECT id, timestamp, story_prompt, character, story, image_prompt, favourite, model_name, input_tokens, output_tokens FROM history WHERE favourite = 1 ORDER BY timestamp DESC")
+    
     rows = c.fetchall()
     conn.close()
     favourites = [
@@ -383,15 +456,30 @@ def get_favourites():
     return {"favourites": favourites}
 
 @app.delete("/history/{history_id}")
-def delete_history_record(history_id: int):
+@require_permission("story_delete_own")
+def delete_history_record(history_id: int, current_user: Dict[str, Any] = Depends(get_current_user)):
+    """Delete a story from history (requires delete own stories permission)"""
     conn = sqlite3.connect(HISTORY_DB)
     c = conn.cursor()
-    # Check if record exists
-    c.execute("SELECT id FROM history WHERE id = ?", (history_id,))
-    row = c.fetchone()
-    if not row:
-        conn.close()
-        raise HTTPException(status_code=404, detail="History record not found")
+    
+    # Check ownership or admin privileges
+    if current_user['role'] != 'super_admin':
+        c.execute("SELECT user_id FROM history WHERE id = ?", (history_id,))
+        row = c.fetchone()
+        if not row:
+            conn.close()
+            raise HTTPException(status_code=404, detail="History record not found")
+        if row[0] != current_user['id'] and row[0] is not None:
+            conn.close()
+            raise HTTPException(status_code=403, detail="Access denied")
+    else:
+        # Check if record exists for admin
+        c.execute("SELECT id FROM history WHERE id = ?", (history_id,))
+        row = c.fetchone()
+        if not row:
+            conn.close()
+            raise HTTPException(status_code=404, detail="History record not found")
+    
     # Delete the record
     c.execute("DELETE FROM history WHERE id = ?", (history_id,))
     conn.commit()
@@ -400,12 +488,15 @@ def delete_history_record(history_id: int):
 
 # --- Character Management Endpoints ---
 @app.post("/characters")
+@require_permission("character_create")
 async def add_character(
     character: str = Form(...),
     name: str = Form(...),
     config: str = Form(...),
-    persona_file: UploadFile = File(...)
+    persona_file: UploadFile = File(...),
+    current_user: Dict[str, Any] = Depends(get_current_user)
 ):
+    """Add a new character (requires character creation permission)"""
     if not character or not name or not config or not persona_file:
         raise HTTPException(status_code=400, detail="Character ID, name, config, and persona file are required")
 
@@ -446,9 +537,10 @@ async def add_character(
             os.remove(persona_path)
         raise HTTPException(status_code=500, detail=f"Failed to save character config: {str(e)}")
 
-    # Create metadata
+    # Create metadata with creator info
     meta = {
         "created_at": datetime.datetime.utcnow().isoformat(),
+        "created_by": current_user['id'],
         "usage_count": 0,
         "last_used": None
     }

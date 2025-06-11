@@ -4,12 +4,13 @@ import './globals.css';
 import { Nav } from '../components/nav';
 import { Toaster } from 'sonner';
 import ErrorBoundary from '../components/ErrorBoundary';
+import { AuthProvider } from '../lib/auth';
 
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: 'Lekhok - AI Story Generator',
-  description: 'Generate stories with AI characters',
+  title: 'KarigorAI - AI Story Generator',
+  description: 'Generate stories with AI characters - Professional storytelling platform',
 };
 
 export default function RootLayout({
@@ -19,19 +20,21 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className={inter.className}>
+      <body className={inter.className} suppressHydrationWarning>
         <ErrorBoundary>
-          <Nav />
-          <ErrorBoundary fallback={
-            <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center p-4">
-              <div className="bg-white/10 backdrop-blur-xl rounded-xl border border-white/20 p-6 text-center">
-                <p className="text-white">Failed to load page content. Please refresh the page.</p>
+          <AuthProvider>
+            <Nav />
+            <ErrorBoundary fallback={
+              <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center p-4">
+                <div className="bg-white/10 backdrop-blur-xl rounded-xl border border-white/20 p-6 text-center">
+                  <p className="text-white">Failed to load page content. Please refresh the page.</p>
+                </div>
               </div>
-            </div>
-          }>
-            {children}
-          </ErrorBoundary>
-          <Toaster />
+            }>
+              {children}
+            </ErrorBoundary>
+            <Toaster />
+          </AuthProvider>
         </ErrorBoundary>
       </body>
     </html>

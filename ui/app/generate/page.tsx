@@ -1,6 +1,8 @@
 'use client';
 
 import { useState } from 'react';
+import { ProtectedRoute } from '../../components/ProtectedRoute';
+import { useAuth } from '@/lib/auth';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Textarea } from '../../components/ui/textarea';
@@ -17,7 +19,8 @@ interface Character {
   name: string;
 }
 
-export default function GeneratePage() {
+function GeneratePageContent() {
+  const { user } = useAuth();
   const [storyPrompt, setStoryPrompt] = useState('');
   const [selectedCharacter, setSelectedCharacter] = useState<string>('');
   const [characters, setCharacters] = useState<Character[]>([]);
@@ -32,9 +35,21 @@ export default function GeneratePage() {
   const [generatedImage, setGeneratedImage] = useState<string | null>(null);
   const [imageError, setImageError] = useState<string | null>(null);
 
+  // Get auth headers
+  const getAuthHeaders = () => {
+    const token = localStorage.getItem('auth_token');
+    return {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
+      'X-Session-Token': token || ''
+    };
+  };
+
   // Fetch characters on component mount
   useState(() => {
-    fetch('http://localhost:8000/characters')
+    fetch('http://localhost:8000/characters', {
+      headers: getAuthHeaders()
+    })
       .then(res => res.json())
       .then(data => setCharacters(Array.isArray(data.characters) ? data.characters : []))
       .catch(err => toast.error('Failed to load characters'));
@@ -55,9 +70,7 @@ export default function GeneratePage() {
     try {
       const response = await fetch('http://localhost:8000/generate', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: getAuthHeaders(),
         body: JSON.stringify({
           storyIdea: storyPrompt,
           character: selectedCharacter,
@@ -72,7 +85,9 @@ export default function GeneratePage() {
       toast.success('Story generated successfully!');
 
       // Fetch the latest history record to get its id and favourite status
-      const histRes = await fetch('http://localhost:8000/history?sort=desc');
+      const histRes = await fetch('http://localhost:8000/history?sort=desc', {
+        headers: getAuthHeaders()
+      });
       const histData = await histRes.json();
       if (Array.isArray(histData.history)) {
         // Find the most recent record matching the generated story and prompt
@@ -97,9 +112,14 @@ export default function GeneratePage() {
 
   const handleToggleFavourite = async () => {
     if (!historyId) return;
-    await fetch(`http://localhost:8000/history/${historyId}/favourite`, { method: 'POST' });
+    await fetch(`http://localhost:8000/history/${historyId}/favourite`, { 
+      method: 'POST',
+      headers: getAuthHeaders()
+    });
     // Refetch to get updated favourite status
-    const histRes = await fetch('http://localhost:8000/history?sort=desc');
+    const histRes = await fetch('http://localhost:8000/history?sort=desc', {
+      headers: getAuthHeaders()
+    });
     const histData = await histRes.json();
     if (Array.isArray(histData.history)) {
       const found = histData.history.find((rec: any) => rec.id === historyId);
@@ -119,9 +139,7 @@ export default function GeneratePage() {
     try {
       const response = await fetch('http://localhost:8000/generate-image', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: getAuthHeaders(),
         body: JSON.stringify({
           imagePrompt: imagePrompt,
         }),
@@ -158,9 +176,16 @@ export default function GeneratePage() {
             <h1 className="text-3xl font-black text-techno mb-1">Generate Story</h1>
             <p className="text-sm text-techno/60">Transform ideas into compelling narratives</p>
           </div>
-          <div className="hidden sm:flex items-center gap-2 glass px-3 py-1.5 rounded-full border border-white/30">
-            <Sparkles className="w-3 h-3 text-gold" />
-            <span className="text-xs font-medium text-techno">AI Powered</span>
+          <div className="flex items-center gap-4">
+            <div className="hidden sm:flex items-center gap-2 glass px-3 py-1.5 rounded-full border border-white/30">
+              <Sparkles className="w-3 h-3 text-gold" />
+              <span className="text-xs font-medium text-techno">AI Powered</span>
+            </div>
+            {user && (
+              <div className="text-sm text-techno/70">
+                Welcome, <span className="font-medium">{user.full_name}</span>
+              </div>
+            )}
           </div>
         </div>
 
@@ -198,34 +223,26 @@ export default function GeneratePage() {
                   <select
                     value={selectedCharacter}
                     onChange={(e) => setSelectedCharacter(e.target.value)}
-                    className={`w-full p-2.5 glass border rounded-lg focus:border-gold/50 focus:outline-none text-techno bg-white/50 text-sm ${
-                      !selectedCharacter ? 'border-red-200' : 'border-white/30'
-                    }`}
+                    className="w-full glass border-white/30 rounded-md px-3 py-2 text-sm text-techno focus:border-gold/50 focus:outline-none"
                   >
-                    <option value="">Select a character...</option>
+                    <option value="">Select a character</option>
                     {characters.map((char) => (
-                      <option key={char.id} value={char.id}>
+                      <option key={char.id} value={char.name}>
                         {char.name}
                       </option>
                     ))}
                   </select>
-                  {!selectedCharacter && (
-                    <p className="text-xs text-red-500 flex items-center gap-1">
-                      <span>Please select a character to continue</span>
-                    </p>
-                  )}
                 </div>
 
-                <Button 
-                  onClick={handleGenerate} 
+                <Button
+                  onClick={handleGenerate}
                   disabled={isGenerating || !storyPrompt.trim() || !selectedCharacter}
-                  variant="gold"
-                  className="w-full h-10 text-sm font-semibold"
+                  className="w-full bg-gradient-to-r from-gold to-gold/80 hover:from-gold/90 hover:to-gold/70 text-white border-0 h-11 text-sm font-semibold shadow-lg"
                 >
                   {isGenerating ? (
                     <>
-                      <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin mr-2" />
-                      Generating...
+                      <LoadingSpinner size="sm" className="mr-2" />
+                      Generating your story...
                     </>
                   ) : (
                     <>
@@ -234,40 +251,22 @@ export default function GeneratePage() {
                     </>
                   )}
                 </Button>
-              </CardContent>
-            </Card>
 
-            {/* Image Generation Development Notice */}
-            {imagePrompt && (
-              <Card className="glass border-amber-200/60 bg-gradient-to-r from-amber-50/80 to-yellow-50/80">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm flex items-center gap-2 text-amber-700">
-                    <Wrench className="w-4 h-4 text-amber-600" />
-                    Image Generation - Beta Feature
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="pt-0">
-                  <div className="flex items-start gap-3">
-                    <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
-                    <div className="space-y-2">
-                      <p className="text-xs text-amber-700 font-medium">
-                        🚧 This feature is currently under development
+                {/* Beta Notice - More compact */}
+                <div className="bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-lg p-3">
+                  <div className="flex items-start gap-2">
+                    <Info className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
+                    <div className="text-xs">
+                      <p className="font-medium text-amber-800 mb-1">Beta Feature Notice</p>
+                      <p className="text-amber-700 leading-relaxed">
+                        Our AI story generation is in active development. You may experience longer response times or occasional variations in output quality.
                       </p>
-                      <ul className="text-xs text-amber-600 space-y-1">
-                        <li>• Image quality and accuracy may vary</li>
-                        <li>• Generation times can be longer than expected</li>
-                        <li>• Some prompts may not generate as intended</li>
-                        <li>• Feature improvements are being actively developed</li>
-                      </ul>
-                      <div className="flex items-center gap-1 pt-1">
-                        <Info className="w-3 h-3 text-amber-600" />
-                        <span className="text-xs text-amber-600">We appreciate your patience as we refine this feature</span>
-                      </div>
+                      <span className="text-xs text-amber-600">We appreciate your patience as we refine this feature</span>
                     </div>
                   </div>
-                </CardContent>
-              </Card>
-            )}
+                </div>
+              </CardContent>
+            </Card>
 
             {/* Image Prompt Card - Compact */}
             {imagePrompt && (
@@ -459,5 +458,13 @@ export default function GeneratePage() {
         )}
       </div>
     </main>
+  );
+}
+
+export default function GeneratePage() {
+  return (
+    <ProtectedRoute>
+      <GeneratePageContent />
+    </ProtectedRoute>
   );
 } 
