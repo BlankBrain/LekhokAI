@@ -17,6 +17,7 @@ from auth_middleware import (
     require_permission, require_role, log_activity, PermissionChecker
 )
 from google_oauth import GoogleOAuthService
+from security_middleware import SecurityMiddleware, rate_limit
 import logging
 
 # Configure logging
@@ -71,6 +72,7 @@ class GoogleCallbackRequest(BaseModel):
 class ProfileUpdateRequest(BaseModel):
     first_name: Optional[str] = None
     last_name: Optional[str] = None
+    username: Optional[str] = None
     preferred_language: Optional[str] = None
     timezone: Optional[str] = None
 
@@ -88,11 +90,23 @@ class UserManagementRequest(BaseModel):
     action: str  # approve, reject, suspend, activate
     reason: Optional[str] = None
 
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
 # Authentication endpoints
 @auth_router.post("/register")
 async def register(request: Request, data: RegisterRequest):
     """Register a new user with email and password"""
     try:
+        # Apply rate limiting
+        rate_limit_error = SecurityMiddleware.check_rate_limit(request, 'auth', 'register')
+        if rate_limit_error:
+            raise rate_limit_error
+        
         # Validate compliance
         if not data.privacy_policy_accepted or not data.terms_of_service_accepted:
             raise HTTPException(
@@ -191,6 +205,11 @@ async def register(request: Request, data: RegisterRequest):
 async def login(request: Request, response: Response, data: LoginRequest):
     """Login with email and password"""
     try:
+        # Apply rate limiting
+        rate_limit_error = SecurityMiddleware.check_rate_limit(request, 'auth', 'login')
+        if rate_limit_error:
+            raise rate_limit_error
+        
         # Authenticate user
         user = AuthService.authenticate_user(data.email, data.password)
         
@@ -229,7 +248,6 @@ async def login(request: Request, response: Response, data: LoginRequest):
         raise HTTPException(status_code=500, detail="Login failed")
 
 @auth_router.post("/logout")
-@require_auth
 async def logout(request: Request, response: Response):
     """Logout the current user"""
     try:
@@ -252,6 +270,43 @@ async def logout(request: Request, response: Response):
     except Exception as e:
         logger.error(f"Logout error: {e}")
         raise HTTPException(status_code=500, detail="Logout failed")
+
+@auth_router.post("/logout-all")
+async def logout_all_devices(
+    request: Request,
+    response: Response, 
+    current_user: Dict[str, Any] = Depends(get_current_user_required)
+):
+    """Logout from all devices (invalidate all sessions)"""
+    try:
+        deleted_count = AuthService.invalidate_all_user_sessions(current_user['id'])
+        
+        # Clear session cookie
+        response.delete_cookie("session_token")
+        
+        return {
+            "message": f"Logged out from all devices successfully. {deleted_count} sessions invalidated.",
+            "sessions_invalidated": deleted_count
+        }
+        
+    except Exception as e:
+        logger.error(f"Logout all devices error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to logout from all devices")
+
+@auth_router.get("/sessions")
+async def get_active_sessions(request: Request, current_user: Dict[str, Any] = Depends(get_current_user_required)):
+    """Get all active sessions for the current user"""
+    try:
+        sessions = AuthService.get_user_active_sessions(current_user['id'])
+        
+        return {
+            "active_sessions": sessions,
+            "total_count": len(sessions)
+        }
+        
+    except Exception as e:
+        logger.error(f"Get active sessions error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve active sessions")
 
 # Google OAuth endpoints
 @auth_router.get("/google")
@@ -399,18 +454,64 @@ async def google_oauth_callback(request: Request, response: Response, data: Goog
 
 # Profile management endpoints
 @auth_router.get("/profile")
-@require_auth
-@log_activity("profile_viewed", "profile")
-async def get_profile(current_user: Dict[str, Any] = Depends(get_current_user_required)):
-    """Get current user's profile"""
-    return {
-        "user": current_user
-    }
+async def get_profile(request: Request, current_user: Dict[str, Any] = Depends(get_current_user_required)):
+    """Get current user's profile with complete information"""
+    try:
+        import sqlite3
+        from auth_models import AUTH_DB
+        
+        conn = sqlite3.connect(AUTH_DB)
+        c = conn.cursor()
+        
+        # Fetch complete user data with organization name
+        c.execute('''
+            SELECT u.id, u.email, u.first_name, u.last_name, u.username, u.role, u.organization_id, 
+                   u.status, u.is_email_verified, u.created_at, u.last_login, u.auth_provider,
+                   u.preferred_language, u.timezone, o.name as organization_name
+            FROM users u
+            LEFT JOIN organizations o ON u.organization_id = o.id
+            WHERE u.id = ?
+        ''', (current_user['id'],))
+        
+        result = c.fetchone()
+        conn.close()
+        
+        if result:
+            (user_id, email, first_name, last_name, username, role, org_id, status, is_verified, 
+             created_at, last_login, auth_provider, preferred_language, timezone, org_name) = result
+            
+            return {
+                "user": {
+                    "id": user_id,
+                    "email": email,
+                    "first_name": first_name,
+                    "last_name": last_name,
+                    "username": username,
+                    "full_name": f"{first_name} {last_name}".strip() if first_name or last_name else "",
+                    "role": role,
+                    "organization_id": org_id,
+                    "organization_name": org_name,
+                    "status": status,
+                    "is_email_verified": bool(is_verified),
+                    "is_approved": status == "approved",
+                    "is_active": status == "approved",
+                    "created_at": created_at,
+                    "last_login": last_login,
+                    "auth_provider": auth_provider,
+                    "preferred_language": preferred_language,
+                    "timezone": timezone
+                }
+            }
+        else:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+    except Exception as e:
+        logger.error(f"Get profile error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve profile")
 
 @auth_router.put("/profile")
-@require_auth
-@log_activity("profile_updated", "profile")
 async def update_profile(
+    request: Request,
     data: ProfileUpdateRequest,
     current_user: Dict[str, Any] = Depends(get_current_user_required)
 ):
@@ -434,6 +535,10 @@ async def update_profile(
             updates.append("last_name = ?")
             values.append(data.last_name)
         
+        if data.username is not None:
+            updates.append("username = ?")
+            values.append(data.username)
+        
         if data.preferred_language is not None:
             updates.append("preferred_language = ?")
             values.append(data.preferred_language)
@@ -451,9 +556,45 @@ async def update_profile(
             c.execute(query, values)
             conn.commit()
         
+        # Fetch and return the updated user data with all fields
+        c.execute('''
+            SELECT u.id, u.email, u.first_name, u.last_name, u.username, u.role, u.organization_id, 
+                   u.status, u.is_email_verified, u.created_at, u.last_login, u.auth_provider,
+                   u.preferred_language, u.timezone, o.name as organization_name
+            FROM users u
+            LEFT JOIN organizations o ON u.organization_id = o.id
+            WHERE u.id = ?
+        ''', (current_user['id'],))
+        
+        result = c.fetchone()
         conn.close()
         
-        return {"message": "Profile updated successfully"}
+        if result:
+            (user_id, email, first_name, last_name, username, role, org_id, status, is_verified, 
+             created_at, last_login, auth_provider, preferred_language, timezone, org_name) = result
+            
+            return {
+                "id": user_id,
+                "email": email,
+                "first_name": first_name,
+                "last_name": last_name,
+                "username": username,
+                "full_name": f"{first_name} {last_name}".strip() if first_name or last_name else "",
+                "role": role,
+                "organization_id": org_id,
+                "organization_name": org_name,
+                "status": status,
+                "is_email_verified": bool(is_verified),
+                "is_approved": status == "approved",
+                "is_active": status == "approved",
+                "created_at": created_at,
+                "last_login": last_login,
+                "auth_provider": auth_provider,
+                "preferred_language": preferred_language,
+                "timezone": timezone
+            }
+        else:
+            raise HTTPException(status_code=404, detail="User not found")
         
     except Exception as e:
         logger.error(f"Profile update error: {e}")
@@ -463,6 +604,7 @@ async def update_profile(
 @require_auth
 @log_activity("password_changed", "profile")
 async def change_password(
+    request: Request,
     data: PasswordChangeRequest,
     current_user: Dict[str, Any] = Depends(get_current_user_required)
 ):
@@ -689,14 +831,12 @@ async def manage_user(
 
 # Utility endpoints
 @auth_router.get("/me")
-@require_auth
-async def get_current_user_info(current_user: Dict[str, Any] = Depends(get_current_user_required)):
+async def get_current_user_info(request: Request, current_user: Dict[str, Any] = Depends(get_current_user_required)):
     """Get current user information"""
     return current_user
 
 @auth_router.get("/permissions")
-@require_auth
-async def get_user_permissions(current_user: Dict[str, Any] = Depends(get_current_user_required)):
+async def get_user_permissions(request: Request, current_user: Dict[str, Any] = Depends(get_current_user_required)):
     """Get current user's permissions"""
     try:
         import sqlite3
@@ -775,4 +915,85 @@ async def resend_verification(data: ResendVerificationRequest):
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Resend verification error: {e}")
-        raise HTTPException(status_code=500, detail="Failed to resend verification email") 
+        raise HTTPException(status_code=500, detail="Failed to resend verification email")
+
+@auth_router.post("/forgot-password")
+async def forgot_password(request: Request, data: ForgotPasswordRequest):
+    """Initiate password reset flow"""
+    try:
+        # Apply rate limiting
+        rate_limit_error = SecurityMiddleware.check_rate_limit(request, 'auth', 'forgot_password')
+        if rate_limit_error:
+            raise rate_limit_error
+        
+        success = AuthService.initiate_password_reset(data.email)
+        
+        # Always return success for security (don't reveal if email exists)
+        return {
+            "message": "If an account with that email exists, a password reset link has been sent.",
+            "email_sent": True
+        }
+        
+    except Exception as e:
+        logger.error(f"Forgot password error: {e}")
+        # Don't reveal error details for security
+        return {
+            "message": "If an account with that email exists, a password reset link has been sent.",
+            "email_sent": True
+        }
+
+@auth_router.post("/reset-password")
+async def reset_password(data: ResetPasswordRequest):
+    """Reset password using reset token"""
+    try:
+        # Validate password strength
+        if len(data.new_password) < 6:
+            raise HTTPException(
+                status_code=400,
+                detail="Password must be at least 6 characters long"
+            )
+        
+        # Validate token first
+        if not AuthService.validate_password_reset_token(data.token):
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid or expired password reset token"
+            )
+        
+        # Reset the password
+        success = AuthService.reset_password_with_token(data.token, data.new_password)
+        
+        if not success:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid or expired password reset token"
+            )
+        
+        return {
+            "message": "Password reset successfully. You can now login with your new password.",
+            "reset_successful": True
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Password reset error: {e}")
+        raise HTTPException(status_code=500, detail="Password reset failed")
+
+@auth_router.get("/validate-reset-token")
+async def validate_reset_token(token: str):
+    """Validate a password reset token"""
+    try:
+        is_valid = AuthService.validate_password_reset_token(token)
+        
+        return {
+            "valid": is_valid,
+            "message": "Token is valid" if is_valid else "Token is invalid or expired"
+        }
+        
+    except Exception as e:
+        logger.error(f"Token validation error: {e}")
+        return {
+            "valid": False,
+            "message": "Token validation failed"
+        } 

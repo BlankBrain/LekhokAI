@@ -10,9 +10,13 @@ import datetime
 import hashlib
 import secrets
 import bcrypt
+import logging
 from typing import Optional, Dict, List, Any
 from enum import Enum
 import json
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 # Database file
 AUTH_DB = 'auth.db'
@@ -280,6 +284,11 @@ class AuthService:
         return secrets.token_urlsafe(32)
     
     @staticmethod
+    def generate_password_reset_token() -> str:
+        """Generate a secure password reset token"""
+        return secrets.token_urlsafe(32)
+    
+    @staticmethod
     def create_user(email: str, password: str = None, first_name: str = "", last_name: str = "", 
                    username: str = "", organization_name: str = "",
                    role: UserRole = UserRole.GENERAL_USER, auth_provider: AuthProvider = AuthProvider.EMAIL,
@@ -418,7 +427,11 @@ class AuthService:
             "first_name": first_name,
             "last_name": last_name,
             "role": role,
-            "organization_id": org_id
+            "organization_id": org_id,
+            "status": status,
+            "is_email_verified": bool(is_verified),
+            "is_approved": status == UserStatus.APPROVED.value,
+            "is_active": status == UserStatus.APPROVED.value
         }
     
     @staticmethod
@@ -431,9 +444,9 @@ class AuthService:
         expires_at = datetime.datetime.utcnow() + datetime.timedelta(days=30)
         
         c.execute('''
-            INSERT INTO sessions (user_id, session_token, expires_at, ip_address, user_agent)
-            VALUES (?, ?, ?, ?, ?)
-        ''', (user_id, session_token, expires_at.isoformat(), ip_address, user_agent))
+            INSERT INTO sessions (user_id, session_token, expires_at, is_active, ip_address, user_agent)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (user_id, session_token, expires_at.isoformat(), True, ip_address, user_agent))
         
         conn.commit()
         conn.close()
@@ -449,7 +462,7 @@ class AuthService:
         c = conn.cursor()
         
         c.execute('''
-            SELECT u.id, u.email, u.first_name, u.last_name, u.role, u.organization_id, s.expires_at
+            SELECT u.id, u.email, u.first_name, u.last_name, u.role, u.organization_id, s.expires_at, u.status, u.is_email_verified
             FROM sessions s
             JOIN users u ON s.user_id = u.id
             WHERE s.session_token = ? AND s.is_active = TRUE AND u.status = 'approved'
@@ -461,7 +474,7 @@ class AuthService:
         if not result:
             return None
         
-        user_id, email, first_name, last_name, role, org_id, expires_at = result
+        user_id, email, first_name, last_name, role, org_id, expires_at, status, is_verified = result
         
         # Check if session is expired
         expires_datetime = datetime.datetime.fromisoformat(expires_at)
@@ -475,18 +488,116 @@ class AuthService:
             "first_name": first_name,
             "last_name": last_name,
             "role": role,
-            "organization_id": org_id
+            "organization_id": org_id,
+            "status": status,
+            "is_email_verified": bool(is_verified),
+            "is_approved": status == UserStatus.APPROVED.value,
+            "is_active": status == UserStatus.APPROVED.value
         }
     
     @staticmethod
     def invalidate_session(session_token: str):
-        """Invalidate a session"""
+        """Invalidate a specific session"""
         conn = sqlite3.connect(AUTH_DB)
         c = conn.cursor()
         
-        c.execute('UPDATE sessions SET is_active = FALSE WHERE session_token = ?', (session_token,))
-        conn.commit()
-        conn.close()
+        try:
+            # Get user_id before deleting
+            c.execute('SELECT user_id FROM sessions WHERE session_token = ?', (session_token,))
+            result = c.fetchone()
+            
+            if result:
+                user_id = result[0]
+                
+                # Delete the session
+                c.execute('DELETE FROM sessions WHERE session_token = ?', (session_token,))
+                conn.commit()
+                
+                # Log the session invalidation
+                AuthService.log_activity(user_id, "session_invalidated", "sessions", session_token[:8])
+                
+        except Exception as e:
+            logger.error(f"Session invalidation error: {e}")
+        finally:
+            conn.close()
+    
+    @staticmethod
+    def invalidate_all_user_sessions(user_id: int):
+        """Invalidate all sessions for a specific user (logout from all devices)"""
+        conn = sqlite3.connect(AUTH_DB)
+        c = conn.cursor()
+        
+        try:
+            # Delete all sessions for the user
+            c.execute('DELETE FROM sessions WHERE user_id = ?', (user_id,))
+            deleted_count = c.rowcount
+            conn.commit()
+            
+            # Log the mass session invalidation
+            AuthService.log_activity(user_id, "all_sessions_invalidated", "sessions", f"count:{deleted_count}")
+            
+            return deleted_count
+            
+        except Exception as e:
+            logger.error(f"Mass session invalidation error: {e}")
+            return 0
+        finally:
+            conn.close()
+    
+    @staticmethod
+    def cleanup_expired_sessions():
+        """Clean up expired sessions from the database"""
+        conn = sqlite3.connect(AUTH_DB)
+        c = conn.cursor()
+        
+        try:
+            # Delete expired sessions
+            current_time = datetime.datetime.utcnow().isoformat()
+            c.execute('DELETE FROM sessions WHERE expires_at < ?', (current_time,))
+            deleted_count = c.rowcount
+            conn.commit()
+            
+            logger.info(f"Cleaned up {deleted_count} expired sessions")
+            return deleted_count
+            
+        except Exception as e:
+            logger.error(f"Session cleanup error: {e}")
+            return 0
+        finally:
+            conn.close()
+    
+    @staticmethod
+    def get_user_active_sessions(user_id: int) -> List[Dict[str, Any]]:
+        """Get all active sessions for a user"""
+        conn = sqlite3.connect(AUTH_DB)
+        c = conn.cursor()
+        
+        try:
+            current_time = datetime.datetime.utcnow().isoformat()
+            c.execute('''
+                SELECT session_token, created_at, expires_at, ip_address, user_agent
+                FROM sessions 
+                WHERE user_id = ? AND expires_at > ?
+                ORDER BY created_at DESC
+            ''', (user_id, current_time))
+            
+            sessions = []
+            for row in c.fetchall():
+                sessions.append({
+                    "session_token": row[0][:8] + "...",  # Only show partial token for security
+                    "created_at": row[1],
+                    "expires_at": row[2],
+                    "ip_address": row[3],
+                    "user_agent": row[4]
+                })
+            
+            return sessions
+            
+        except Exception as e:
+            logger.error(f"Get user sessions error: {e}")
+            return []
+        finally:
+            conn.close()
     
     @staticmethod
     def has_permission(user_role: str, permission_name: str) -> bool:
@@ -586,54 +697,184 @@ class AuthService:
     
     @staticmethod
     def resend_verification_email(email: str) -> bool:
-        """Resend verification email to user"""
-        conn = sqlite3.connect(AUTH_DB)
-        c = conn.cursor()
-        
+        """Resend email verification"""
         try:
-            # Find unverified user
+            conn = sqlite3.connect(AUTH_DB)
+            c = conn.cursor()
+            
+            # Get user info
             c.execute('''
-                SELECT id, first_name, last_name, is_email_verified
-                FROM users 
-                WHERE email = ? AND auth_provider = 'email'
+                SELECT id, first_name, last_name, is_email_verified, auth_provider
+                FROM users WHERE email = ? AND auth_provider = 'email'
             ''', (email,))
             
-            user = c.fetchone()
-            if not user:
-                raise ValueError("User not found")
+            result = c.fetchone()
+            if not result:
+                # Don't reveal if email doesn't exist
+                return True
             
-            user_id, first_name, last_name, is_verified = user
+            user_id, first_name, last_name, is_verified, auth_provider = result
             
             if is_verified:
-                raise ValueError("Email already verified")
+                # Email already verified
+                return True
             
             # Generate new verification token
             verification_token = AuthService.generate_verification_token()
             
             # Update user with new token
             c.execute('''
-                UPDATE users 
-                SET email_verification_token = ?, updated_at = ?
+                UPDATE users SET email_verification_token = ?, updated_at = ?
                 WHERE id = ?
             ''', (verification_token, datetime.datetime.utcnow().isoformat(), user_id))
             
             conn.commit()
+            conn.close()
             
             # Send verification email
             from email_service import email_service
             display_name = f"{first_name} {last_name}".strip() or email.split('@')[0]
-            success = email_service.send_verification_email(email, verification_token, display_name)
+            return email_service.send_verification_email(email, verification_token, display_name)
             
-            if success:
-                AuthService.log_activity(user_id, "verification_email_resent", "users", str(user_id))
+        except Exception as e:
+            logger.error(f"Resend verification error: {e}")
+            return False
+    
+    @staticmethod
+    def initiate_password_reset(email: str) -> bool:
+        """Initiate password reset process"""
+        try:
+            conn = sqlite3.connect(AUTH_DB)
+            c = conn.cursor()
+            
+            # Check if user exists with email auth provider
+            c.execute('''
+                SELECT id, first_name, last_name, is_email_verified, auth_provider
+                FROM users WHERE email = ? AND auth_provider = 'email'
+            ''', (email,))
+            
+            result = c.fetchone()
+            if not result:
+                # Don't reveal if email doesn't exist for security
+                logger.info(f"Password reset requested for non-existent email: {email}")
+                return True
+            
+            user_id, first_name, last_name, is_verified, auth_provider = result
+            
+            if not is_verified:
+                # Email not verified - don't allow password reset
+                logger.info(f"Password reset attempted for unverified email: {email}")
+                return True
+            
+            # Generate password reset token
+            reset_token = AuthService.generate_password_reset_token()
+            expires_at = datetime.datetime.utcnow() + datetime.timedelta(hours=1)  # 1 hour expiry
+            
+            # Update user with reset token
+            c.execute('''
+                UPDATE users 
+                SET password_reset_token = ?, password_reset_expires = ?, updated_at = ?
+                WHERE id = ?
+            ''', (reset_token, expires_at.isoformat(), datetime.datetime.utcnow().isoformat(), user_id))
+            
+            conn.commit()
+            conn.close()
+            
+            # Send password reset email
+            from email_service import email_service
+            display_name = f"{first_name} {last_name}".strip() or email.split('@')[0]
+            success = email_service.send_password_reset_email(email, reset_token, display_name)
+            
+            # Log the password reset request
+            AuthService.log_activity(user_id, "password_reset_requested", "auth", email)
             
             return success
             
         except Exception as e:
-            conn.rollback()
-            raise e
-        finally:
+            logger.error(f"Password reset initiation error: {e}")
+            return False
+    
+    @staticmethod
+    def reset_password_with_token(reset_token: str, new_password: str) -> bool:
+        """Reset password using reset token"""
+        try:
+            conn = sqlite3.connect(AUTH_DB)
+            c = conn.cursor()
+            
+            # Find user with valid reset token
+            c.execute('''
+                SELECT id, email, password_reset_expires
+                FROM users 
+                WHERE password_reset_token = ? AND auth_provider = 'email'
+            ''', (reset_token,))
+            
+            result = c.fetchone()
+            if not result:
+                logger.warning(f"Invalid password reset token attempted: {reset_token[:8]}...")
+                return False
+            
+            user_id, email, expires_str = result
+            
+            # Check if token has expired
+            if expires_str:
+                expires_at = datetime.datetime.fromisoformat(expires_str)
+                if datetime.datetime.utcnow() > expires_at:
+                    logger.info(f"Expired password reset token for user {email}")
+                    return False
+            else:
+                logger.warning(f"No expiry date for reset token: {reset_token[:8]}...")
+                return False
+            
+            # Hash new password
+            password_hash = AuthService.hash_password(new_password)
+            
+            # Update password and clear reset token
+            c.execute('''
+                UPDATE users 
+                SET password_hash = ?, password_reset_token = NULL, 
+                    password_reset_expires = NULL, updated_at = ?
+                WHERE id = ?
+            ''', (password_hash, datetime.datetime.utcnow().isoformat(), user_id))
+            
+            conn.commit()
             conn.close()
+            
+            # Log the password reset completion
+            AuthService.log_activity(user_id, "password_reset_completed", "auth", email)
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Password reset error: {e}")
+            return False
+    
+    @staticmethod
+    def validate_password_reset_token(reset_token: str) -> bool:
+        """Validate a password reset token without resetting"""
+        try:
+            conn = sqlite3.connect(AUTH_DB)
+            c = conn.cursor()
+            
+            c.execute('''
+                SELECT password_reset_expires
+                FROM users 
+                WHERE password_reset_token = ? AND auth_provider = 'email'
+            ''', (reset_token,))
+            
+            result = c.fetchone()
+            if not result:
+                return False
+            
+            expires_str = result[0]
+            if expires_str:
+                expires_at = datetime.datetime.fromisoformat(expires_str)
+                return datetime.datetime.utcnow() <= expires_at
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"Token validation error: {e}")
+            return False
 
 # Initialize the database when the module is imported
 init_auth_db() 

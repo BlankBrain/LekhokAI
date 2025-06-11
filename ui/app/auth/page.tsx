@@ -426,6 +426,17 @@ export default function AuthPage() {
                   {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </button>
               </div>
+              {/* Forgot Password Link - Only show in login mode */}
+              {mode === 'login' && (
+                <div className="text-right mt-2">
+                  <Link
+                    href="/auth/forgot-password"
+                    className="text-sm text-indigo-600 hover:text-indigo-700 transition-colors"
+                  >
+                    Forgot your password?
+                  </Link>
+                </div>
+              )}
             </div>
 
             {/* Terms and Privacy for Registration */}

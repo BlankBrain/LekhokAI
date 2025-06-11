@@ -6,15 +6,22 @@ import React, { createContext, useContext, useState, useEffect, ReactNode, useCa
 export interface User {
   id: number
   email: string
-  username: string
-  full_name: string
+  first_name: string
+  last_name: string
+  username?: string
+  full_name?: string
   role: 'general_user' | 'organization_user' | 'super_admin'
   organization_id?: number
   organization_name?: string
+  status: string
+  is_email_verified: boolean
   is_active: boolean
   is_approved: boolean
-  created_at: string
+  created_at?: string
   last_login?: string
+  auth_provider?: string
+  preferred_language?: string
+  timezone?: string
   profile_picture?: string
   preferences?: Record<string, any>
 }
@@ -80,18 +87,15 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   // Helper function to make authenticated API calls
   const apiCall = useCallback(async (endpoint: string, options: RequestInit = {}) => {
-    const token = localStorage.getItem('auth_token')
-    
     const headers = {
       'Content-Type': 'application/json',
-      ...(token && { 'Authorization': `Bearer ${token}` }),
-      ...(token && { 'X-Session-Token': token }),
       ...options.headers,
     }
 
     const response = await fetch(`${API_BASE}${endpoint}`, {
       ...options,
       headers,
+      credentials: 'include', // Include cookies for session-based auth
     })
 
     if (!response.ok) {
@@ -105,21 +109,14 @@ export function AuthProvider({ children }: AuthProviderProps) {
   // Check authentication status on mount
   const checkAuthStatus = useCallback(async () => {
     try {
-      const token = localStorage.getItem('auth_token')
-      if (!token) {
-        setState(prev => ({ ...prev, isLoading: false }))
-        return
-      }
-
       const response = await apiCall('/auth/profile')
       setState({
-        user: response,
+        user: response.user,
         isAuthenticated: true,
         isLoading: false,
         error: null,
       })
     } catch (error) {
-      localStorage.removeItem('auth_token')
       setState({
         user: null,
         isAuthenticated: false,
@@ -140,6 +137,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       const response = await fetch(`${API_BASE}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include', // Include cookies
         body: JSON.stringify(credentials),
       })
 
@@ -149,13 +147,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
       }
 
       const data = await response.json()
-      localStorage.setItem('auth_token', data.access_token)
-
-      // Get user profile
-      const userProfile = await apiCall('/auth/profile')
+      // No need to store token in localStorage - using cookies
       
       setState({
-        user: userProfile,
+        user: data.user,
         isAuthenticated: true,
         isLoading: false,
         error: null,
@@ -177,6 +172,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       const response = await fetch(`${API_BASE}/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include', // Include cookies
         body: JSON.stringify({
           email: data.email,
           password: data.password,
@@ -220,7 +216,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
       // Continue with logout even if API call fails
       console.warn('Logout API call failed:', error)
     } finally {
-      localStorage.removeItem('auth_token')
       setState({
         user: null,
         isAuthenticated: false,
@@ -230,18 +225,40 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
   }, [apiCall])
 
+  const refreshUser = useCallback(async () => {
+    try {
+      setState(prev => ({ ...prev, isLoading: true }))
+      const response = await apiCall('/auth/profile')
+      setState(prev => ({
+        ...prev,
+        user: response.user,
+        isAuthenticated: true,
+        isLoading: false,
+        error: null,
+      }))
+    } catch (error) {
+      setState(prev => ({
+        ...prev,
+        user: null,
+        isAuthenticated: false,
+        isLoading: false,
+        error: null,
+      }))
+    }
+  }, [apiCall])
+
   const updateProfile = useCallback(async (data: Partial<User>) => {
     setState(prev => ({ ...prev, isLoading: true, error: null }))
     
     try {
-      const response = await apiCall('/auth/profile', {
+      const updatedUser = await apiCall('/auth/profile', {
         method: 'PUT',
         body: JSON.stringify(data),
       })
 
       setState(prev => ({
         ...prev,
-        user: response,
+        user: updatedUser, // Use the updated user data returned from backend
         isLoading: false,
       }))
     } catch (error) {
@@ -251,15 +268,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
         error: error instanceof Error ? error.message : 'Profile update failed',
       }))
       throw error
-    }
-  }, [apiCall])
-
-  const refreshUser = useCallback(async () => {
-    try {
-      const userProfile = await apiCall('/auth/profile')
-      setState(prev => ({ ...prev, user: userProfile }))
-    } catch (error) {
-      console.warn('Failed to refresh user profile:', error)
     }
   }, [apiCall])
 
@@ -276,6 +284,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       const response = await fetch(`${API_BASE}/auth/google/callback`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include', // Include cookies
         body: JSON.stringify({ 
           code, 
           state,
@@ -293,21 +302,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
       }
 
       const data = await response.json()
-      console.log('Google OAuth callback success:', { hasToken: !!data.session_token || !!data.access_token })
+      console.log('Google OAuth callback success:', { hasUser: !!data.user })
       
-      const token = data.session_token || data.access_token
-      if (!token) {
-        throw new Error('No authentication token received from server')
-      }
-      
-      localStorage.setItem('auth_token', token)
-
-      // Get user profile
-      const userProfile = await apiCall('/auth/profile')
-      console.log('User profile retrieved:', { email: userProfile.email, id: userProfile.id })
+      // No need to store token in localStorage - using cookies
       
       setState({
-        user: userProfile,
+        user: data.user,
         isAuthenticated: true,
         isLoading: false,
         error: null,

@@ -132,7 +132,18 @@ export default function ProfilePage() {
   const handleSave = async () => {
     setLocalLoading(true)
     try {
-      await updateProfile(formData)
+      // Split full_name into first_name and last_name for backend
+      const nameParts = formData.full_name.trim().split(' ')
+      const firstName = nameParts[0] || ''
+      const lastName = nameParts.slice(1).join(' ') || ''
+      
+      const updateData = {
+        first_name: firstName,
+        last_name: lastName,
+        username: formData.username
+      }
+      
+      await updateProfile(updateData)
       setIsEditing(false)
     } catch (error) {
       console.error('Failed to update profile:', error)

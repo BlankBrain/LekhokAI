@@ -108,8 +108,8 @@ export function ProtectedRoute({
     )
   }
 
-  // Check approval requirements
-  if (requireApproval && !user?.is_approved) {
+  // Check approval requirements (bypass for super_admin)
+  if (requireApproval && !user?.is_approved && user?.role !== 'super_admin') {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-purple-50 to-pink-100">
         <div className="bg-white rounded-xl shadow-xl p-8 max-w-md mx-auto text-center">
